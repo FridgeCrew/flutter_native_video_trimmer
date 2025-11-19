@@ -4,8 +4,10 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.media.MediaMetadataRetriever
 import android.net.Uri
+import androidx.media3.common.Effect
 import androidx.media3.common.MediaItem
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.ScaleAndRotateTransformation
 import androidx.media3.transformer.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -61,6 +63,8 @@ class VideoManager {
             file
         }
 
+       val rotation = mediaMetadataRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toFloatOrNull() ?: 0f
+
         // Switch to Main thread for Transformer operations
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { continuation ->
@@ -74,9 +78,23 @@ class VideoManager {
                     )
                     .build()
 
+                val videoEffects = ArrayList<Effect>()
+                if (rotation != 0f) {
+                    val rotateEffect = ScaleAndRotateTransformation.Builder()
+                        .setRotationDegrees(rotation)
+                        .build()
+                    videoEffects.add(rotateEffect)
+                }
+
+                val effects = Effects(
+                    emptyList(),
+                    videoEffects
+                )
+
                 val editedMediaItem =
                     EditedMediaItem.Builder(mediaItem)
                         .setRemoveAudio(!includeAudio)
+                        .setEffects(effects)
                         .build()
 
                 val transformerBuilder = Transformer.Builder(context)

@@ -37,10 +37,12 @@ class _MyAppState extends State<MyApp> {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(
+    return MaterialApp(
       home: Scaffold(
         body: Center(
-          child: Text('Check console for function usage example'),
+          child: TextButton(onPressed: (){
+            _exampleUsage();
+          }, child: const Text("변환")),
         ),
       ),
     );
