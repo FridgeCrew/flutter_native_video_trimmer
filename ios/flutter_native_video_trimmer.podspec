@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'flutter_native_video_trimmer'
-  s.version          = '1.0.0'
+  s.version          = '1.0.1'
   s.summary          = 'A Flutter plugin for video manipulation using native code'
   s.description      = <<-DESC
 A lightweight Flutter plugin for video manipulation that uses pure native implementations (Media3 for Android and AVFoundation for iOS). Efficiently trim videos, generate thumbnails, and retrieve video information without FFmpeg dependency.

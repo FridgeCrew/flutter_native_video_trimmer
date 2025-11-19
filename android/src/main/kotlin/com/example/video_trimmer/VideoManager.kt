@@ -16,14 +16,12 @@ import java.io.File
 import java.io.FileOutputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
-import java.lang.ref.WeakReference
-
 
 
 @UnstableApi
 class VideoManager {
     private var currentVideoPath: String? = null
-    private var transformer: Transformer? = null
+//    private var transformer: Transformer? = null
     private val mediaMetadataRetriever = MediaMetadataRetriever()
 
     companion object {
@@ -52,20 +50,32 @@ class VideoManager {
         includeAudio: Boolean
     ): String {
         val videoPath = currentVideoPath ?: throw VideoException("No video loaded")
-        
-        // Create output file on IO thread
-        val outputFile = withContext(Dispatchers.IO) {
+
+        // [1] 무거운 IO 작업 (파일 준비, 메타데이터 읽기) -> Dispatchers.IO
+        val (outputFile, rotation) = withContext(Dispatchers.IO) {
+            // 파일 준비
             val timestamp = System.currentTimeMillis()
             val file = File(context.cacheDir, "video_trimmer_$timestamp.mp4")
             if (file.exists()) {
                 file.delete()
             }
-            file
+
+            // 회전 정보 읽기
+            val rot = try {
+                val retriever = MediaMetadataRetriever()
+                retriever.setDataSource(context, Uri.fromFile(File(videoPath)))
+                val r = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toFloatOrNull() ?: 0f
+                retriever.release()
+                r
+            } catch (e: Exception) {
+                0f
+            }
+
+            // 결과 반환 (Pair로 묶어서 전달)
+            Pair(file, rot)
         }
 
-       val rotation = mediaMetadataRetriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toFloatOrNull() ?: 0f
-
-        // Switch to Main thread for Transformer operations
+        // [2] Transformer 실행 -> Dispatchers.Main (필수!)
         return withContext(Dispatchers.Main) {
             suspendCancellableCoroutine { continuation ->
                 val mediaItem = MediaItem.Builder()
@@ -79,6 +89,8 @@ class VideoManager {
                     .build()
 
                 val videoEffects = ArrayList<Effect>()
+
+                // 회전 보정 (필요 시 주석 해제)
                 if (rotation != 0f) {
                     val rotateEffect = ScaleAndRotateTransformation.Builder()
                         .setRotationDegrees(rotation)
@@ -86,43 +98,42 @@ class VideoManager {
                     videoEffects.add(rotateEffect)
                 }
 
-                val effects = Effects(
-                    emptyList(),
-                    videoEffects
-                )
+                val editedMediaItem = EditedMediaItem.Builder(mediaItem)
+                    .setRemoveAudio(!includeAudio)
+                    .setEffects(Effects(emptyList(), videoEffects))
+                    .build()
 
-                val editedMediaItem =
-                    EditedMediaItem.Builder(mediaItem)
-                        .setRemoveAudio(!includeAudio)
-                        .setEffects(effects)
-                        .build()
-
-                val transformerBuilder = Transformer.Builder(context)
-                    .addListener(
-                        object : Transformer.Listener {
-                            override fun onCompleted(
-                                composition: Composition,
-                                exportResult: ExportResult
-                            ) {
-                                continuation.resume(outputFile.absolutePath)
-                            }
-
-                            override fun onError(
-                                composition: Composition,
-                                exportResult: ExportResult,
-                                exportException: ExportException
-                            ) {
-                                continuation.resumeWithException(VideoException("Failed to trim video", exportException))
-                            }
+                val transformerListener = object : Transformer.Listener {
+                    override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                        if (continuation.isActive) {
+                            continuation.resume(outputFile.absolutePath)
                         }
-                    )
+                    }
+
+                    override fun onError(
+                        composition: Composition,
+                        exportResult: ExportResult,
+                        exportException: ExportException
+                    ) {
+                        if (continuation.isActive) {
+                            continuation.resumeWithException(VideoException("Failed to trim video", exportException))
+                        }
+                    }
+                }
+
+                // Transformer 생성 및 실행은 Main 스레드에서!
+                val transformer = Transformer.Builder(context)
+                    .addListener(transformerListener)
                     .experimentalSetTrimOptimizationEnabled(true)
+                    .build()
 
-                transformer = transformerBuilder.build()
-                transformer?.start(editedMediaItem, outputFile.absolutePath)
-
+                transformer.start(editedMediaItem, outputFile.absolutePath)
+                println("Transformer started "+ outputFile.absolutePath)
                 continuation.invokeOnCancellation {
-                    transformer?.cancel()
+                    transformer.cancel()
+                    if (outputFile.exists()) {
+                        outputFile.delete()
+                    }
                 }
             }
         }
@@ -174,8 +185,8 @@ class VideoManager {
         }
     }
     fun release() {
-        transformer?.cancel()
-        transformer = null
+//        transformer?.cancel()
+//        transformer = null
         mediaMetadataRetriever.release()
         currentVideoPath = null
         synchronized(this) {
